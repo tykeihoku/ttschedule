@@ -8,7 +8,7 @@ from streamlit_calendar import calendar
 # ---------------------------------------------------------
 # 0. 設定・フォルダ作成＆パスワード定義
 # ---------------------------------------------------------
-TEACHER_PASSWORD = "admin"
+TEACHER_PASSWORD = "tktt"
 UPLOAD_DIR = "uploaded_pdfs"
 
 if not os.path.exists(UPLOAD_DIR):
