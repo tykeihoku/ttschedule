@@ -22,7 +22,6 @@ def get_db_connection():
     return conn
 
 def fetch_public_events():
-    """公開設定（is_public = 1）の予定のみを取得"""
     conn = get_db_connection()
     query = """
         SELECT target_category, event_date, start_time, end_time, event_type, title, location, leader, participants,

@@ -8,7 +8,7 @@ from streamlit_calendar import calendar
 # ---------------------------------------------------------
 # 0. 設定・フォルダ作成＆パスワード定義
 # ---------------------------------------------------------
-TEACHER_PASSWORD = "tktt"
+TEACHER_PASSWORD = "admin"
 UPLOAD_DIR = "uploaded_pdfs"
 
 if not os.path.exists(UPLOAD_DIR):
@@ -399,442 +399,383 @@ def parse_time_str(time_str, default_time):
 init_db()
 
 st.set_page_config(page_title="卓球部 予定＆事務管理", page_icon="🏓", layout="wide")
-st.title("🏓 卓球部 スケジュール管理")
+st.title("🏓 卓球部 スケジュール管理（教員用）")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-role = st.sidebar.radio("表示モード切替", ["生徒モード（閲覧専用）", "教員モード（管理用）"])
+if not st.session_state.authenticated:
+    st.subheader("🔒 教員モード・ログイン")
+    with st.form("login_form"):
+        password_input = st.text_input("パスワード", type="password")
+        login_button = st.form_submit_button("ログイン")
+        if login_button:
+            if password_input == TEACHER_PASSWORD:
+                st.session_state.authenticated = True
+                st.success("認証に成功しました！")
+                st.rerun()
+            else:
+                st.error("パスワードが正しくありません。")
 
-# ---------------------------------------------------------
-# 画面 A: 生徒モード
-# ---------------------------------------------------------
-if role == "生徒モード（閲覧専用）":
-    st.subheader("📅 今後の予定")
-    df_public = fetch_events(is_teacher=False)
-    
-    if not df_public.empty:
-        tab1, tab2 = st.tabs(["📆 カレンダー", "📋 一覧リスト"])
-        
-        with tab1:
-            events_data = prepare_calendar_events(df_public, is_teacher=False)
-            cal_result = calendar(events=events_data, options=CALENDAR_OPTIONS, key="public_calendar")
-            
-            if cal_result and cal_result.get("callback") == "eventClick":
-                event_info = cal_result["eventClick"]["event"]
-                show_event_details(event_info, is_teacher=False)
-            
-        with tab2:
-            for _, row in df_public.iterrows():
-                target_cat = row.get("target_category", "合同")
-                t_str = f"⏰ {row['start_time']}〜{row['end_time']}"
-                leader_str = f"\n\n👨‍🏫 引率者: {row['leader']}" if row.get('leader') else ""
-                part_str = f"\n\n👥 参加部員: {row['participants']}" if row['participants'] else ""
-                st.info(f"**【{row['event_date']}】 [{target_cat}] {row['title']}** ({t_str})\n\n📍 場所: {row['location'] or '未定'}{leader_str}{part_str}")
-                
-                boy_url = row.get('url_form_boy') or row.get('url_form')
-                girl_url = row.get('url_form_girl')
-                has_links = any([boy_url, girl_url, row['url_doc'], row['url_absent'], row['url_sheet']])
-                if has_links:
-                    render_external_link("📋 男子・参加アンケート（Googleフォーム）", boy_url)
-                    render_external_link("📋 女子・参加アンケート（Googleフォーム）", girl_url)
-                    render_external_link("📝 注意事項（Googleドキュメント）", row['url_doc'])
-                    render_external_link("✋ 欠席連絡（Googleフォーム）", row['url_absent'])
-                    render_external_link("📊 出欠状況（Googleスプレッドシート）", row['url_sheet'])
-
-                has_pdf = any([
-                    row['pdf_guidelines'], row['pdf_singles'], 
-                    row.get('pdf_singles_2'), row.get('pdf_singles_3'), 
-                    row['pdf_doubles'], row['pdf_team']
-                ])
-                if has_pdf:
-                    with st.expander("📄 添付PDFファイルを確認"):
-                        render_pdf_download_button("大会要項", row['pdf_guidelines'])
-                        render_pdf_download_button("組み合わせ（シングルス ①）", row['pdf_singles'])
-                        render_pdf_download_button("組み合わせ（シングルス ②）", row.get('pdf_singles_2'))
-                        render_pdf_download_button("組み合わせ（シングルス ③）", row.get('pdf_singles_3'))
-                        render_pdf_download_button("組み合わせ（ダブルス）", row['pdf_doubles'])
-                        render_pdf_download_button("組み合わせ（学校対抗）", row['pdf_team'])
-    else:
-        st.write("現在、公開されている予定はありません。")
-
-# ---------------------------------------------------------
-# 画面 B: 教員モード
-# ---------------------------------------------------------
 else:
-    if not st.session_state.authenticated:
-        st.subheader("🔒 教員モード・ログイン")
-        with st.form("login_form"):
-            password_input = st.text_input("パスワード", type="password")
-            login_button = st.form_submit_button("ログイン")
-            if login_button:
-                if password_input == TEACHER_PASSWORD:
-                    st.session_state.authenticated = True
-                    st.success("認証に成功しました！")
-                    st.rerun()
-                else:
-                    st.error("パスワードが正しくありません。")
-    
-    else:
-        if st.sidebar.button("🚪 ログアウト"):
-            st.session_state.authenticated = False
-            st.rerun()
+    if st.sidebar.button("🚪 ログアウト"):
+        st.session_state.authenticated = False
+        st.rerun()
 
-        tab_schedule, tab_teachers, tab_members = st.tabs(["📅 スケジュール & 事務管理", "👨‍🏫 教員名簿", "👥 部員名簿"])
+    tab_schedule, tab_teachers, tab_members = st.tabs(["📅 スケジュール & 事務管理", "👨‍🏫 教員名簿", "👥 部員名簿"])
 
-        # ---------------------------------------------------------
-        # タブ 1: スケジュール & 事務管理
-        # ---------------------------------------------------------
-        with tab_schedule:
-            df_all = fetch_events(is_teacher=True)
-            df_members = fetch_members()
-            df_teachers = fetch_teachers()
-            
-            # 全部員リスト
-            member_options_all = []
-            member_options_hs = []
-            member_options_ms = []
-            if not df_members.empty:
-                for _, r in df_members.iterrows():
-                    stype = r.get('school_type', '高校')
-                    cls_info = f" {r['class_num']}" if r['class_num'] else ""
-                    att_info = f" {r['attendance_num']}番" if r['attendance_num'] > 0 else ""
-                    item_str = f"[{stype}]{r['grade']}{cls_info}{att_info} {r['name']}"
-                    
-                    member_options_all.append(item_str)
-                    if stype == "高校":
-                        member_options_hs.append(item_str)
-                    elif stype == "中学":
-                        member_options_ms.append(item_str)
-
-            # 教員リスト（引率者用）
-            teacher_options = []
-            if not df_teachers.empty:
-                for _, r in df_teachers.iterrows():
-                    role_str = f"（{r['role']}）" if r['role'] else ""
-                    teacher_options.append(f"{r['name']} 先生{role_str}")
-
-            if not df_all.empty:
-                with st.expander("📆 カレンダーを表示（クリックで詳細確認）", expanded=True):
-                    st.caption("🔴 未申請あり / 🔵 事務完了大会 / 🩵 通常練習 / 🔒 非公開")
-                    events_teacher_data = prepare_calendar_events(df_all, is_teacher=True)
-                    cal_teacher_result = calendar(events=events_teacher_data, options=CALENDAR_OPTIONS, key="teacher_calendar")
-                    
-                    if cal_teacher_result and cal_teacher_result.get("callback") == "eventClick":
-                        event_info = cal_teacher_result["eventClick"]["event"]
-                        show_event_details(event_info, is_teacher=True)
-
-            st.divider()
-            
-            sub_tab_add, sub_tab_list = st.tabs(["➕ 新規予定・事務登録", "📋 登録一覧・削除"])
-            
-            with sub_tab_add:
-                copy_template = None
-                if not df_all.empty:
-                    st.markdown("##### 📋 過去の予定からコピーして入力")
-                    copy_options = ["（新規作成・コピーしない）"] + [
-                        f"【{row['event_date']}】[{row.get('target_category', '合同')}] {row['title']}（{row['event_type']}）"
-                        for _, row in df_all.iterrows()
-                    ]
-                    selected_copy = st.selectbox("複製元にする予定を選択", copy_options, key="event_copy_selectbox")
-                    
-                    if selected_copy != "（新規作成・コピーしない）":
-                        selected_idx = copy_options.index(selected_copy) - 1
-                        copy_template = df_all.iloc[selected_idx]
-                        st.info(f"💡 「{copy_template['title']}」の内容を下のフォームに呼び出しました。日付などを修正して保存してください。")
-
-                default_target = copy_template.get("target_category", "合同") if copy_template is not None else "合同"
-                default_type = copy_template["event_type"] if copy_template is not None else "通常練習"
-                default_title = copy_template["title"] if copy_template is not None else ""
-                default_location = copy_template["location"] if copy_template is not None else ""
-                default_leader = copy_template.get("leader", "") if copy_template is not None else ""
-                default_start_time = parse_time_str(copy_template["start_time"], time(9, 0)) if copy_template is not None else time(9, 0)
-                default_end_time = parse_time_str(copy_template["end_time"], time(12, 0)) if copy_template is not None else time(12, 0)
-                default_is_public = bool(copy_template["is_public"]) if copy_template is not None else True
+    # ---------------------------------------------------------
+    # タブ 1: スケジュール & 事務管理
+    # ---------------------------------------------------------
+    with tab_schedule:
+        df_all = fetch_events(is_teacher=True)
+        df_members = fetch_members()
+        df_teachers = fetch_teachers()
+        
+        # 全部員リスト
+        member_options_all = []
+        member_options_hs = []
+        member_options_ms = []
+        if not df_members.empty:
+            for _, r in df_members.iterrows():
+                stype = r.get('school_type', '高校')
+                cls_info = f" {r['class_num']}" if r['class_num'] else ""
+                att_info = f" {r['attendance_num']}番" if r['attendance_num'] > 0 else ""
+                item_str = f"[{stype}]{r['grade']}{cls_info}{att_info} {r['name']}"
                 
-                default_url_form_boy = ""
-                if copy_template is not None:
-                    default_url_form_boy = copy_template.get("url_form_boy") or copy_template.get("url_form") or ""
-                default_url_form_girl = copy_template.get("url_form_girl", "") if copy_template is not None else ""
-                default_url_doc = copy_template.get("url_doc", "") if copy_template is not None else ""
-                default_url_absent = copy_template.get("url_absent", "") if copy_template is not None else ""
-                default_url_sheet = copy_template.get("url_sheet", "") if copy_template is not None else ""
+                member_options_all.append(item_str)
+                if stype == "高校":
+                    member_options_hs.append(item_str)
+                elif stype == "中学":
+                    member_options_ms.append(item_str)
 
-                cat_list = ["高校", "高校男子", "高校女子", "中学", "中学男子", "中学女子", "合同", "大会参加者のみ"]
-                cat_index = cat_list.index(default_target) if default_target in cat_list else 2
+        # 教員リスト（引率者用）
+        teacher_options = []
+        if not df_teachers.empty:
+            for _, r in df_teachers.iterrows():
+                role_str = f"（{r['role']}）" if r['role'] else ""
+                teacher_options.append(f"{r['name']} 先生{role_str}")
 
-                event_types_list = ["大会", "練習試合", "通常練習", "ミーティング", "その他"]
-                type_index = event_types_list.index(default_type) if default_type in event_types_list else 0
+        if not df_all.empty:
+            with st.expander("📆 カレンダーを表示（クリックで詳細確認）", expanded=True):
+                st.caption("🔴 未申請あり / 🔵 事務完了大会 / 🩵 通常練習 / 🔒 非公開")
+                events_teacher_data = prepare_calendar_events(df_all, is_teacher=True)
+                cal_teacher_result = calendar(events=events_teacher_data, options=CALENDAR_OPTIONS, key="teacher_calendar")
+                
+                if cal_teacher_result and cal_teacher_result.get("callback") == "eventClick":
+                    event_info = cal_teacher_result["eventClick"]["event"]
+                    show_event_details(event_info, is_teacher=True)
 
-                # 引率者のプルダウン選択肢（教員優先、無ければ部員）
-                leader_select_list = teacher_options if teacher_options else member_options_all
-                leader_options = ["未設定"] + leader_select_list
-                leader_index = 0
-                if default_leader in leader_options:
-                    leader_index = leader_options.index(default_leader)
+        st.divider()
+        
+        sub_tab_add, sub_tab_list = st.tabs(["➕ 新規予定・事務登録", "📋 登録一覧・削除"])
+        
+        with sub_tab_add:
+            copy_template = None
+            if not df_all.empty:
+                st.markdown("##### 📋 過去の予定からコピーして入力")
+                copy_options = ["（新規作成・コピーしない）"] + [
+                    f"【{row['event_date']}】[{row.get('target_category', '合同')}] {row['title']}（{row['event_type']}）"
+                    for _, row in df_all.iterrows()
+                ]
+                selected_copy = st.selectbox("複製元にする予定を選択", copy_options, key="event_copy_selectbox")
+                
+                if selected_copy != "（新規作成・コピーしない）":
+                    selected_idx = copy_options.index(selected_copy) - 1
+                    copy_template = df_all.iloc[selected_idx]
+                    st.info(f"💡 「{copy_template['title']}」の内容を下のフォームに呼び出しました。日付などを修正して保存してください。")
 
-                status_opts = ["未申請", "申請済", "不要"]
-                def get_status_idx(val):
-                    return status_opts.index(val) if val in status_opts else 2
-
-                with st.form("add_event_form", clear_on_submit=True):
-                    col_cat, col_type = st.columns(2)
-                    with col_cat:
-                        target_category = st.selectbox("対象（区分）", cat_list, index=cat_index)
-                    with col_type:
-                        event_type = st.selectbox("予定の種類", event_types_list, index=type_index)
-
-                    event_date = st.date_input("日付", date.today())
-                    
-                    c_start, c_end = st.columns(2)
-                    with c_start:
-                        start_t = st.time_input("開始時間", value=default_start_time)
-                    with c_end:
-                        end_t = st.time_input("終了時間", value=default_end_time)
-                    
-                    title = st.text_input("予定タイトル", value=default_title)
-                    location = st.text_input("場所", value=default_location)
-                    
-                    selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_options, index=leader_index)
-                    if not teacher_options:
-                        st.caption("※教員名簿が未登録のため、部員リストを表示しています。「👨‍🏫 教員名簿」タブから教員を追加できます。")
-
-                    # 区分の選択に合わせた推奨リスト
-                    if target_category == "高校":
-                        active_member_opts = member_options_hs if member_options_hs else member_options_all
-                    elif target_category == "中学":
-                        active_member_opts = member_options_ms if member_options_ms else member_options_all
-                    else:
-                        active_member_opts = member_options_all
-
-                    default_participants = active_member_opts
-                    if copy_template is not None and copy_template["participants"]:
-                        template_parts = [p.strip() for p in copy_template["participants"].split(",")]
-                        default_participants = [m for m in active_member_opts if m in template_parts]
-
-                    selected_members = []
-                    if active_member_opts:
-                        selected_members = st.multiselect("対象部員", options=active_member_opts, default=default_participants)
-
-                    st.markdown("##### 🔗 Googleフォーム / ドキュメント / スプレッドシート リンク設定")
-                    col_fb, col_fg = st.columns(2)
-                    with col_fb:
-                        url_form_boy = st.text_input("📋 男子・参加アンケート (Googleフォーム)", value=default_url_form_boy, placeholder="https://forms.gle/...")
-                    with col_fg:
-                        url_form_girl = st.text_input("📋 女子・参加アンケート (Googleフォーム)", value=default_url_form_girl, placeholder="https://forms.gle/...")
-
-                    url_doc = st.text_input("📝 注意事項 (Googleドキュメント URL)", value=default_url_doc, placeholder="https://docs.google.com/document/d/...")
-                    url_absent = st.text_input("✋ 欠席連絡 (Googleフォーム URL)", value=default_url_absent, placeholder="https://forms.gle/...")
-                    url_sheet = st.text_input("📊 出欠状況 (Googleスプレッドシート URL)", value=default_url_sheet, placeholder="https://docs.google.com/spreadsheets/d/...")
-
-                    st.markdown("##### 📄 PDF添付")
-                    pdf_guidelines_file = st.file_uploader("大会要項 (PDF)", type=["pdf"])
-                    
-                    st.caption("シングルスの組み合わせ（最大3ファイルまでアップロード可）")
-                    pdf_singles_file = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"])
-                    pdf_singles_file_2 = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"])
-                    pdf_singles_file_3 = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"])
-                    
-                    pdf_doubles_file = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"])
-                    pdf_team_file = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"])
-
-                    is_public = st.checkbox("生徒・保護者に公開する", value=default_is_public)
-                    
-                    st.markdown("##### 💼 事務管理（大会・練習試合用）")
-                    
-                    app_idx = get_status_idx(copy_template["status_application"]) if copy_template is not None else 0
-                    pay_idx = get_status_idx(copy_template["status_payment"]) if copy_template is not None else 0
-                    trip_idx = get_status_idx(copy_template["status_trip"]) if copy_template is not None else 0
-                    hol_idx = get_status_idx(copy_template["status_holiday_notice"]) if copy_template is not None else 0
-                    ros_idx = get_status_idx(copy_template["status_roster"]) if copy_template is not None else 0
-                    del_idx = get_status_idx(copy_template["status_delegation"]) if copy_template is not None else 0
-
-                    col_m1, col_m2 = st.columns(2)
-                    with col_m1:
-                        status_app = st.selectbox("申込", status_opts, index=app_idx)
-                        status_pay = st.selectbox("支払い", status_opts, index=pay_idx)
-                        status_trip = st.selectbox("出張申請", status_opts, index=trip_idx)
-                    with col_m2:
-                        status_holiday = st.selectbox("休日活動届", status_opts, index=hol_idx)
-                        status_roster = st.selectbox("部員名簿", status_opts, index=ros_idx)
-                        status_delegation = st.selectbox("委任状", status_opts, index=del_idx)
-
-                    submitted = st.form_submit_button("保存する", use_container_width=True)
-                    if submitted:
-                        if title.strip() == "":
-                            st.error("予定タイトルを入力してください。")
-                        else:
-                            s_time_str = start_t.strftime("%H:%M")
-                            e_time_str = end_t.strftime("%H:%M")
-                            if event_type not in ["大会", "練習試合"]:
-                                status_app = status_pay = status_trip = status_holiday = status_roster = status_delegation = "不要"
-                            participants_str = ", ".join(selected_members) if selected_members else "全員/未指定"
-                            leader_str = "" if selected_leader == "未設定" else selected_leader
-                            
-                            timestamp_prefix = date.today().strftime("%Y%m%d")
-                            path_guidelines = save_uploaded_file(pdf_guidelines_file, f"{timestamp_prefix}_guidelines")
-                            path_singles = save_uploaded_file(pdf_singles_file, f"{timestamp_prefix}_singles")
-                            path_singles_2 = save_uploaded_file(pdf_singles_file_2, f"{timestamp_prefix}_singles2")
-                            path_singles_3 = save_uploaded_file(pdf_singles_file_3, f"{timestamp_prefix}_singles3")
-                            path_doubles = save_uploaded_file(pdf_doubles_file, f"{timestamp_prefix}_doubles")
-                            path_team = save_uploaded_file(pdf_team_file, f"{timestamp_prefix}_team")
-
-                            add_event(
-                                target_category, event_date, s_time_str, e_time_str, event_type, title, location, leader_str, is_public,
-                                status_app, status_pay, status_trip, status_holiday, status_roster, status_delegation,
-                                participants_str, path_guidelines, path_singles, path_singles_2, path_singles_3, path_doubles, path_team,
-                                url_form_boy, url_form_girl, url_doc, url_absent, url_sheet
-                            )
-                            st.success("✅ 登録しました！")
-                            st.rerun()
-
-            with sub_tab_list:
-                if not df_all.empty:
-                    df_display = df_all.copy()
-                    df_display["時間"] = df_display.apply(lambda r: f"{r['start_time']}〜{r['end_time']}", axis=1)
-                    df_display["公開"] = df_display["is_public"].apply(lambda x: "🟢" if x == 1 else "🔒")
-                    
-                    show_cols = ["id", "target_category", "event_date", "時間", "event_type", "title", "leader", "公開"]
-                    df_render = df_display[show_cols]
-                    df_render.columns = ["ID", "区分", "日付", "時間", "種別", "タイトル", "引率者", "公開"]
-                    
-                    st.dataframe(df_render, use_container_width=True, hide_index=True)
-                    
-                    with st.expander("🗑️ 予定の削除"):
-                        event_ids = df_all["id"].tolist()
-                        selected_id = st.selectbox("削除対象のID", event_ids)
-                        if st.button("削除実行", use_container_width=True):
-                            delete_event(selected_id)
-                            st.warning("削除しました。")
-                            st.rerun()
-                else:
-                    st.write("予定なし")
-
-        # ---------------------------------------------------------
-        # タブ 2: 教員名簿の登録・管理
-        # ---------------------------------------------------------
-        with tab_teachers:
-            sub_t_add, sub_t_list = st.tabs(["➕ 教員の追加", "📋 教員名簿"])
+            default_target = copy_template.get("target_category", "合同") if copy_template is not None else "合同"
+            default_type = copy_template["event_type"] if copy_template is not None else "通常練習"
+            default_title = copy_template["title"] if copy_template is not None else ""
+            default_location = copy_template["location"] if copy_template is not None else ""
+            default_leader = copy_template.get("leader", "") if copy_template is not None else ""
+            default_start_time = parse_time_str(copy_template["start_time"], time(9, 0)) if copy_template is not None else time(9, 0)
+            default_end_time = parse_time_str(copy_template["end_time"], time(12, 0)) if copy_template is not None else time(12, 0)
+            default_is_public = bool(copy_template["is_public"]) if copy_template is not None else True
             
-            with sub_t_add:
-                with st.form("add_teacher_form", clear_on_submit=True):
-                    t_name = st.text_input("教員氏名 (例: 山田 太郎)")
-                    t_role = st.selectbox("役職・役割", ["主顧問", "副顧問", "外部指導員", "部活動指導員", "その他"])
-                    t_note = st.text_input("備考 (任意: 担当教科など)")
-                    
-                    t_submitted = st.form_submit_button("教員を追加", use_container_width=True)
-                    if t_submitted:
-                        if t_name.strip() == "":
-                            st.error("氏名を入力してください。")
-                        else:
-                            add_teacher(t_name.strip(), t_role, t_note.strip())
-                            st.success(f"✅ {t_name} 先生を登録しました！")
-                            st.rerun()
-                            
-            with sub_t_list:
-                df_t = fetch_teachers()
-                if not df_t.empty:
-                    df_t_display = df_t[["id", "name", "role", "note"]].copy()
-                    df_t_display.columns = ["ID", "氏名", "役職", "備考"]
-                    st.dataframe(df_t_display, use_container_width=True, hide_index=True)
-                    
-                    with st.expander("🗑️ 教員の削除"):
-                        t_ids = df_t["id"].tolist()
-                        sel_t_id = st.selectbox("削除対象のID", t_ids, key="del_teacher_id")
-                        if st.button("教員を削除", use_container_width=True):
-                            delete_teacher(sel_t_id)
-                            st.warning("削除しました。")
-                            st.rerun()
+            default_url_form_boy = ""
+            if copy_template is not None:
+                default_url_form_boy = copy_template.get("url_form_boy") or copy_template.get("url_form") or ""
+            default_url_form_girl = copy_template.get("url_form_girl", "") if copy_template is not None else ""
+            default_url_doc = copy_template.get("url_doc", "") if copy_template is not None else ""
+            default_url_absent = copy_template.get("url_absent", "") if copy_template is not None else ""
+            default_url_sheet = copy_template.get("url_sheet", "") if copy_template is not None else ""
+
+            cat_list = ["高校", "中学", "合同", "その他"]
+            cat_index = cat_list.index(default_target) if default_target in cat_list else 2
+
+            event_types_list = ["大会", "練習試合", "通常練習", "ミーティング", "その他"]
+            type_index = event_types_list.index(default_type) if default_type in event_types_list else 0
+
+            # 引率者のプルダウン選択肢（教員優先、無ければ部員）
+            leader_select_list = teacher_options if teacher_options else member_options_all
+            leader_options = ["未設定"] + leader_select_list
+            leader_index = 0
+            if default_leader in leader_options:
+                leader_index = leader_options.index(default_leader)
+
+            status_opts = ["未申請", "申請済", "不要"]
+            def get_status_idx(val):
+                return status_opts.index(val) if val in status_opts else 2
+
+            with st.form("add_event_form", clear_on_submit=True):
+                col_cat, col_type = st.columns(2)
+                with col_cat:
+                    target_category = st.selectbox("対象（区分）", cat_list, index=cat_index)
+                with col_type:
+                    event_type = st.selectbox("予定の種類", event_types_list, index=type_index)
+
+                event_date = st.date_input("日付", date.today())
+                
+                c_start, c_end = st.columns(2)
+                with c_start:
+                    start_t = st.time_input("開始時間", value=default_start_time)
+                with c_end:
+                    end_t = st.time_input("終了時間", value=default_end_time)
+                
+                title = st.text_input("予定タイトル", value=default_title)
+                location = st.text_input("場所", value=default_location)
+                
+                selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_options, index=leader_index)
+                if not teacher_options:
+                    st.caption("※教員名簿が未登録のため、部員リストを表示しています。「👨‍🏫 教員名簿」タブから教員を追加できます。")
+
+                if target_category == "高校":
+                    active_member_opts = member_options_hs if member_options_hs else member_options_all
+                elif target_category == "中学":
+                    active_member_opts = member_options_ms if member_options_ms else member_options_all
                 else:
-                    st.info("教員が登録されていません。上の「➕ 教員の追加」から登録してください。")
+                    active_member_opts = member_options_all
 
-        # ---------------------------------------------------------
-        # タブ 3: 部員名簿の登録・管理
-        # ---------------------------------------------------------
-        with tab_members:
-            sub_m_add, sub_m_list = st.tabs(["➕ 部員の追加", "📋 部員名簿・データ出力"])
-            
-            with sub_m_add:
-                with st.form("add_member_form", clear_on_submit=True):
-                    col_stype, col_grd = st.columns(2)
-                    with col_stype:
-                        m_school_type = st.selectbox("区分", ["高校", "中学", "その他"])
-                    with col_grd:
-                        if m_school_type == "高校":
-                            m_grade = st.selectbox("学年", ["高1", "高2", "高3"])
-                        elif m_school_type == "中学":
-                            m_grade = st.selectbox("学年", ["中1", "中2", "中3"])
-                        else:
-                            m_grade = st.selectbox("区分", ["マネージャー", "顧問", "コーチ", "その他"])
+                default_participants = active_member_opts
+                if copy_template is not None and copy_template["participants"]:
+                    template_parts = [p.strip() for p in copy_template["participants"].split(",")]
+                    default_participants = [m for m in active_member_opts if m in template_parts]
 
-                    col_cls, col_att = st.columns(2)
-                    class_options = ["なし"] + [f"{i}組" for i in range(1, 11)]
-                    with col_cls:
-                        m_class_sel = st.selectbox("クラス", class_options)
-                    
-                    att_options = ["なし"] + [f"{i}番" for i in range(1, 46)]
-                    with col_att:
-                        m_att_sel = st.selectbox("出席番号", att_options)
+                selected_members = []
+                if active_member_opts:
+                    selected_members = st.multiselect("対象部員", options=active_member_opts, default=default_participants)
 
-                    m_name = st.text_input("氏名")
-                    m_pos = st.text_input("戦型・役割")
-                    
-                    m_submitted = st.form_submit_button("名簿に追加", use_container_width=True)
-                    if m_submitted:
-                        if m_name.strip() == "":
-                            st.error("氏名を入力してください。")
-                        else:
-                            class_val = "" if m_class_sel == "なし" else m_class_sel
-                            att_val = 0 if m_att_sel == "なし" else int(m_att_sel.replace("番", ""))
-                            
-                            add_member(m_school_type, m_grade, class_val, att_val, m_name.strip(), m_pos.strip())
-                            st.success(f"✅ {m_name} さんを登録しました！")
-                            st.rerun()
-                            
-            with sub_m_list:
-                df_m = fetch_members()
-                if not df_m.empty:
-                    df_m_display = df_m[["id", "school_type", "grade", "class_num", "attendance_num", "name", "position"]].copy()
-                    df_m_display["attendance_num"] = df_m_display["attendance_num"].apply(lambda x: f"{x}番" if x > 0 else "")
-                    df_m_display.columns = ["ID", "区分", "学年", "組", "番", "氏名", "戦型"]
-                    st.dataframe(df_m_display, use_container_width=True, hide_index=True)
-                    
-                    st.divider()
-                    st.markdown("##### 📋 Excelコピー / CSV出力")
-                    target_group = st.selectbox(
-                        "校種・学年", 
-                        ["全員", "高校生のみ", "中学生のみ", "高1のみ", "高2のみ", "高3のみ"],
-                        key="export_filter"
-                    )
-                    export_mode = st.selectbox(
-                        "形式",
-                        ["名前のみ（縦一列）", "詳細データ（タブ区切り）"]
-                    )
-                    
-                    if target_group == "全員":
-                        df_target = df_m.copy()
-                    elif target_group == "高校生のみ":
-                        df_target = df_m[df_m["school_type"] == "高校"].copy()
-                    elif target_group == "中学生のみ":
-                        df_target = df_m[df_m["school_type"] == "中学"].copy()
+                st.markdown("##### 🔗 Googleフォーム / ドキュメント / スプレッドシート リンク設定")
+                col_fb, col_fg = st.columns(2)
+                with col_fb:
+                    url_form_boy = st.text_input("📋 男子・参加アンケート (Googleフォーム)", value=default_url_form_boy, placeholder="https://forms.gle/...")
+                with col_fg:
+                    url_form_girl = st.text_input("📋 女子・参加アンケート (Googleフォーム)", value=default_url_form_girl, placeholder="https://forms.gle/...")
+
+                url_doc = st.text_input("📝 注意事項 (Googleドキュメント URL)", value=default_url_doc, placeholder="https://docs.google.com/document/d/...")
+                url_absent = st.text_input("✋ 欠席連絡 (Googleフォーム URL)", value=default_url_absent, placeholder="https://forms.gle/...")
+                url_sheet = st.text_input("📊 出欠状況 (Googleスプレッドシート URL)", value=default_url_sheet, placeholder="https://docs.google.com/spreadsheets/d/...")
+
+                st.markdown("##### 📄 PDF添付")
+                pdf_guidelines_file = st.file_uploader("大会要項 (PDF)", type=["pdf"])
+                
+                st.caption("シングルスの組み合わせ（最大3ファイルまでアップロード可）")
+                pdf_singles_file = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"])
+                pdf_singles_file_2 = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"])
+                pdf_singles_file_3 = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"])
+                
+                pdf_doubles_file = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"])
+                pdf_team_file = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"])
+
+                is_public = st.checkbox("生徒・保護者に公開する", value=default_is_public)
+                
+                st.markdown("##### 💼 事務管理（大会・練習試合用）")
+                
+                app_idx = get_status_idx(copy_template["status_application"]) if copy_template is not None else 0
+                pay_idx = get_status_idx(copy_template["status_payment"]) if copy_template is not None else 0
+                trip_idx = get_status_idx(copy_template["status_trip"]) if copy_template is not None else 0
+                hol_idx = get_status_idx(copy_template["status_holiday_notice"]) if copy_template is not None else 0
+                ros_idx = get_status_idx(copy_template["status_roster"]) if copy_template is not None else 0
+                del_idx = get_status_idx(copy_template["status_delegation"]) if copy_template is not None else 0
+
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    status_app = st.selectbox("申込", status_opts, index=app_idx)
+                    status_pay = st.selectbox("支払い", status_opts, index=pay_idx)
+                    status_trip = st.selectbox("出張申請", status_opts, index=trip_idx)
+                with col_m2:
+                    status_holiday = st.selectbox("休日活動届", status_opts, index=hol_idx)
+                    status_roster = st.selectbox("部員名簿", status_opts, index=ros_idx)
+                    status_delegation = st.selectbox("委任状", status_opts, index=del_idx)
+
+                submitted = st.form_submit_button("保存する", use_container_width=True)
+                if submitted:
+                    if title.strip() == "":
+                        st.error("予定タイトルを入力してください。")
                     else:
-                        filter_grd = target_group.replace("のみ", "")
-                        df_target = df_m[df_m["grade"] == filter_grd].copy()
-                    
-                    if export_mode == "名前のみ（縦一列）":
-                        text_for_excel = "\n".join(df_target["name"].tolist())
-                    else:
-                        lines = [f"{r['school_type']}\t{r['grade']}\t{r['class_num']}\t{r['attendance_num']}番\t{r['name']}" for _, r in df_target.iterrows()]
-                        text_for_excel = "\n".join(lines)
-                    
-                    st.text_area("コピー用テキスト", value=text_for_excel, height=120)
+                        s_time_str = start_t.strftime("%H:%M")
+                        e_time_str = end_t.strftime("%H:%M")
+                        if event_type not in ["大会", "練習試合"]:
+                            status_app = status_pay = status_trip = status_holiday = status_roster = status_delegation = "不要"
+                        participants_str = ", ".join(selected_members) if selected_members else "全員/未指定"
+                        leader_str = "" if selected_leader == "未設定" else selected_leader
+                        
+                        timestamp_prefix = date.today().strftime("%Y%m%d")
+                        path_guidelines = save_uploaded_file(pdf_guidelines_file, f"{timestamp_prefix}_guidelines")
+                        path_singles = save_uploaded_file(pdf_singles_file, f"{timestamp_prefix}_singles")
+                        path_singles_2 = save_uploaded_file(pdf_singles_file_2, f"{timestamp_prefix}_singles2")
+                        path_singles_3 = save_uploaded_file(pdf_singles_file_3, f"{timestamp_prefix}_singles3")
+                        path_doubles = save_uploaded_file(pdf_doubles_file, f"{timestamp_prefix}_doubles")
+                        path_team = save_uploaded_file(pdf_team_file, f"{timestamp_prefix}_team")
 
-                    with st.expander("🗑️ 部員削除"):
-                        m_ids = df_m["id"].tolist()
-                        sel_m_id = st.selectbox("削除対象のID", m_ids, key="del_member_id")
-                        if st.button("部員を削除", use_container_width=True):
-                            delete_member(sel_m_id)
-                            st.warning("削除しました。")
-                            st.rerun()
+                        add_event(
+                            target_category, event_date, s_time_str, e_time_str, event_type, title, location, leader_str, is_public,
+                            status_app, status_pay, status_trip, status_holiday, status_roster, status_delegation,
+                            participants_str, path_guidelines, path_singles, path_singles_2, path_singles_3, path_doubles, path_team,
+                            url_form_boy, url_form_girl, url_doc, url_absent, url_sheet
+                        )
+                        st.success("✅ 登録しました！")
+                        st.rerun()
+
+        with sub_tab_list:
+            if not df_all.empty:
+                df_display = df_all.copy()
+                df_display["時間"] = df_display.apply(lambda r: f"{r['start_time']}〜{r['end_time']}", axis=1)
+                df_display["公開"] = df_display["is_public"].apply(lambda x: "🟢" if x == 1 else "🔒")
+                
+                show_cols = ["id", "target_category", "event_date", "時間", "event_type", "title", "leader", "公開"]
+                df_render = df_display[show_cols]
+                df_render.columns = ["ID", "区分", "日付", "時間", "種別", "タイトル", "引率者", "公開"]
+                
+                st.dataframe(df_render, use_container_width=True, hide_index=True)
+                
+                with st.expander("🗑️ 予定の削除"):
+                    event_ids = df_all["id"].tolist()
+                    selected_id = st.selectbox("削除対象のID", event_ids)
+                    if st.button("削除実行", use_container_width=True):
+                        delete_event(selected_id)
+                        st.warning("削除しました。")
+                        st.rerun()
+            else:
+                st.write("予定なし")
+
+    # ---------------------------------------------------------
+    # タブ 2: 教員名簿の登録・管理
+    # ---------------------------------------------------------
+    with tab_teachers:
+        sub_t_add, sub_t_list = st.tabs(["➕ 教員の追加", "📋 教員名簿"])
+        
+        with sub_t_add:
+            with st.form("add_teacher_form", clear_on_submit=True):
+                t_name = st.text_input("教員氏名 (例: 山田 太郎)")
+                t_role = st.selectbox("役職・役割", ["主顧問", "副顧問", "外部指導員", "部活動指導員", "その他"])
+                t_note = st.text_input("備考 (任意: 担当教科など)")
+                
+                t_submitted = st.form_submit_button("教員を追加", use_container_width=True)
+                if t_submitted:
+                    if t_name.strip() == "":
+                        st.error("氏名を入力してください。")
+                    else:
+                        add_teacher(t_name.strip(), t_role, t_note.strip())
+                        st.success(f"✅ {t_name} 先生を登録しました！")
+                        st.rerun()
+                        
+        with sub_t_list:
+            df_t = fetch_teachers()
+            if not df_t.empty:
+                df_t_display = df_t[["id", "name", "role", "note"]].copy()
+                df_t_display.columns = ["ID", "氏名", "役職", "備考"]
+                st.dataframe(df_t_display, use_container_width=True, hide_index=True)
+                
+                with st.expander("🗑️ 教員の削除"):
+                    t_ids = df_t["id"].tolist()
+                    sel_t_id = st.selectbox("削除対象のID", t_ids, key="del_teacher_id")
+                    if st.button("教員を削除", use_container_width=True):
+                        delete_teacher(sel_t_id)
+                        st.warning("削除しました。")
+                        st.rerun()
+            else:
+                st.info("教員が登録されていません。上の「➕ 教員の追加」から登録してください。")
+
+    # ---------------------------------------------------------
+    # タブ 3: 部員名簿の登録・管理
+    # ---------------------------------------------------------
+    with tab_members:
+        sub_m_add, sub_m_list = st.tabs(["➕ 部員の追加", "📋 部員名簿・データ出力"])
+        
+        with sub_m_add:
+            with st.form("add_member_form", clear_on_submit=True):
+                col_stype, col_grd = st.columns(2)
+                with col_stype:
+                    m_school_type = st.selectbox("区分", ["高校", "中学", "その他"])
+                with col_grd:
+                    if m_school_type == "高校":
+                        m_grade = st.selectbox("学年", ["高1", "高2", "高3"])
+                    elif m_school_type == "中学":
+                        m_grade = st.selectbox("学年", ["中1", "中2", "中3"])
+                    else:
+                        m_grade = st.selectbox("区分", ["マネージャー", "顧問", "コーチ", "その他"])
+
+                col_cls, col_att = st.columns(2)
+                class_options = ["なし"] + [f"{i}組" for i in range(1, 11)]
+                with col_cls:
+                    m_class_sel = st.selectbox("クラス", class_options)
+                
+                att_options = ["なし"] + [f"{i}番" for i in range(1, 46)]
+                with col_att:
+                    m_att_sel = st.selectbox("出席番号", att_options)
+
+                m_name = st.text_input("氏名")
+                m_pos = st.text_input("戦型・役割")
+                
+                m_submitted = st.form_submit_button("名簿に追加", use_container_width=True)
+                if m_submitted:
+                    if m_name.strip() == "":
+                        st.error("氏名を入力してください。")
+                    else:
+                        class_val = "" if m_class_sel == "なし" else m_class_sel
+                        att_val = 0 if m_att_sel == "なし" else int(m_att_sel.replace("番", ""))
+                        
+                        add_member(m_school_type, m_grade, class_val, att_val, m_name.strip(), m_pos.strip())
+                        st.success(f"✅ {m_name} さんを登録しました！")
+                        st.rerun()
+                        
+        with sub_m_list:
+            df_m = fetch_members()
+            if not df_m.empty:
+                df_m_display = df_m[["id", "school_type", "grade", "class_num", "attendance_num", "name", "position"]].copy()
+                df_m_display["attendance_num"] = df_m_display["attendance_num"].apply(lambda x: f"{x}番" if x > 0 else "")
+                df_m_display.columns = ["ID", "区分", "学年", "組", "番", "氏名", "戦型"]
+                st.dataframe(df_m_display, use_container_width=True, hide_index=True)
+                
+                st.divider()
+                st.markdown("##### 📋 Excelコピー / CSV出力")
+                target_group = st.selectbox(
+                    "対象絞り込み", 
+                    ["全員", "高校生のみ", "中学生のみ", "高1のみ", "高2のみ", "高3のみ"],
+                    key="export_filter"
+                )
+                export_mode = st.selectbox(
+                    "形式",
+                    ["名前のみ（縦一列）", "詳細データ（タブ区切り）"]
+                )
+                
+                if target_group == "全員":
+                    df_target = df_m.copy()
+                elif target_group == "高校生のみ":
+                    df_target = df_m[df_m["school_type"] == "高校"].copy()
+                elif target_group == "中学生のみ":
+                    df_target = df_m[df_m["school_type"] == "中学"].copy()
                 else:
-                    st.info("部員が登録されていません。")
+                    filter_grd = target_group.replace("のみ", "")
+                    df_target = df_m[df_m["grade"] == filter_grd].copy()
+                
+                if export_mode == "名前のみ（縦一列）":
+                    text_for_excel = "\n".join(df_target["name"].tolist())
+                else:
+                    lines = [f"{r['school_type']}\t{r['grade']}\t{r['class_num']}\t{r['attendance_num']}番\t{r['name']}" for _, r in df_target.iterrows()]
+                    text_for_excel = "\n".join(lines)
+                
+                st.text_area("コピー用テキスト", value=text_for_excel, height=120)
+
+                with st.expander("🗑️ 部員削除"):
+                    m_ids = df_m["id"].tolist()
+                    sel_m_id = st.selectbox("削除対象のID", m_ids, key="del_member_id")
+                    if st.button("部員を削除", use_container_width=True):
+                        delete_member(sel_m_id)
+                        st.warning("削除しました。")
+                        st.rerun()
+            else:
+                st.info("部員が登録されていません。")
