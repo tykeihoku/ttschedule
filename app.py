@@ -212,22 +212,26 @@ def update_event(event_id, target_category, event_date, start_time, end_time, ev
                  url_form_boy, url_form_girl, url_doc, url_absent, url_sheet):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE events SET
-            target_category = ?, event_date = ?, start_time = ?, end_time = ?, event_type = ?, title = ?, location = ?, leader = ?, is_public = ?,
-            status_application = ?, status_payment = ?, status_trip = ?, status_holiday_notice = ?, status_roster = ?, status_delegation = ?,
-            participants = ?, pdf_guidelines = ?, pdf_singles = ?, pdf_singles_2 = ?, pdf_singles_3 = ?, pdf_doubles = ?, pdf_team = ?,
-            url_form_boy = ?, url_form_girl = ?, url_doc = ?, url_absent = ?, url_sheet = ?
-        WHERE id = ?
-    """, (
-        target_category, str(event_date), str(start_time), str(end_time), event_type, title, location, leader,
-        1 if is_public else 0, status_application, status_payment, status_trip,
-        status_holiday_notice, status_roster, status_delegation, participants_str,
-        pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
-        url_form_boy, url_form_girl, url_doc, url_absent, url_sheet, event_id
-    ))
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("""
+            UPDATE events SET
+                target_category = ?, event_date = ?, start_time = ?, end_time = ?, event_type = ?, title = ?, location = ?, leader = ?, is_public = ?,
+                status_application = ?, status_payment = ?, status_trip = ?, status_holiday_notice = ?, status_roster = ?, status_delegation = ?,
+                participants = ?, pdf_guidelines = ?, pdf_singles = ?, pdf_singles_2 = ?, pdf_singles_3 = ?, pdf_doubles = ?, pdf_team = ?,
+                url_form_boy = ?, url_form_girl = ?, url_doc = ?, url_absent = ?, url_sheet = ?
+            WHERE id = ?
+        """, (
+            target_category, str(event_date), str(start_time), str(end_time), event_type, title, location, leader,
+            1 if is_public else 0, status_application, status_payment, status_trip,
+            status_holiday_notice, status_roster, status_delegation, participants_str,
+            pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
+            url_form_boy, url_form_girl, url_doc, url_absent, url_sheet, event_id
+        ))
+        conn.commit()
+    except Exception as e:
+        st.error(f"データベース更新エラー: {e}")
+    finally:
+        conn.close()
 
 def fetch_events(is_teacher=False):
     conn = get_db_connection()
@@ -656,18 +660,20 @@ else:
                         st.success("✅ 登録しました！")
                         st.rerun()
 
-        # --- SubTab 2: 直接編集 ---
+# --- SubTab 2: 直接編集 ---
         with sub_tab_edit:
             if not df_all.empty:
-                edit_options = [
-                    f"【ID:{row['id']} / {row['event_date']}】[{row.get('target_category', '合同')}] {row['title']}"
+                # 選択肢の作成
+                edit_dict = {
+                    f"【ID:{row['id']} / {row['event_date']}】[{row.get('target_category', '合同')}] {row['title']}": row['id']
                     for _, row in df_all.iterrows()
-                ]
-                selected_edit_str = st.selectbox("編集したい予定を選択してください", edit_options, key="edit_event_selectbox")
+                }
                 
-                selected_edit_idx = edit_options.index(selected_edit_str)
-                edit_row = df_all.iloc[selected_edit_idx]
-                edit_event_id = edit_row['id']
+                selected_edit_label = st.selectbox("編集したい予定を選択してください", list(edit_dict.keys()), key="edit_event_selectbox")
+                selected_edit_id = edit_dict[selected_edit_label]
+                
+                # 選択されたIDのデータを取得
+                edit_row = df_all[df_all['id'] == selected_edit_id].iloc[0]
 
                 e_target = edit_row.get("target_category", "合同")
                 e_type = edit_row["event_type"]
@@ -692,27 +698,29 @@ else:
                 leader_opts_edit = ["未設定"] + leader_select_list_edit
                 leader_idx_edit = leader_opts_edit.index(e_leader) if e_leader in leader_opts_edit else 0
 
-                with st.form(f"edit_event_form_{edit_event_id}"):
-                    st.markdown(f"#### ✏️ 予定 ID:{edit_event_id} の内容を編集")
+                # フォームキーおよび各入力フィールドのkeyに ID を付与してセッションを固着させない
+                with st.form(key=f"form_edit_event_{selected_edit_id}"):
+                    st.markdown(f"#### ✏️ 予定 ID:{selected_edit_id} の内容を編集")
                     
                     col_cat_e, col_type_e = st.columns(2)
                     with col_cat_e:
-                        e_target_category = st.selectbox("対象（区分）", cat_list, index=cat_idx_edit)
+                        e_target_category = st.selectbox("対象（区分）", cat_list, index=cat_idx_edit, key=f"cat_{selected_edit_id}")
                     with col_type_e:
-                        e_event_type = st.selectbox("予定の種類", event_types_list, index=type_idx_edit)
+                        e_event_type = st.selectbox("予定の種類", event_types_list, index=type_idx_edit, key=f"type_{selected_edit_id}")
 
-                    e_event_date = st.date_input("日付", value=e_date)
+                    e_event_date = st.date_input("日付", value=e_date, key=f"date_{selected_edit_id}")
                     
                     c_start_e, c_end_e = st.columns(2)
                     with c_start_e:
-                        e_start_t = st.time_input("開始時間", value=e_start_time)
+                        e_start_t = st.time_input("開始時間", value=e_start_time, key=f"start_{selected_edit_id}")
                     with c_end_e:
-                        e_end_t = st.time_input("終了時間", value=e_end_time)
+                        e_end_t = st.time_input("終了時間", value=e_end_time, key=f"end_{selected_edit_id}")
                     
-                    e_title_in = st.text_input("予定タイトル", value=e_title)
-                    e_location_in = st.text_input("場所", value=e_location)
+                    # ⚠️ タイトルと場所の入力欄に key を追加することで変更が確実に取得できるよう修正
+                    e_title_in = st.text_input("予定タイトル", value=e_title, key=f"title_in_{selected_edit_id}")
+                    e_location_in = st.text_input("場所", value=e_location, key=f"loc_in_{selected_edit_id}")
                     
-                    e_selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_opts_edit, index=leader_idx_edit)
+                    e_selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_opts_edit, index=leader_idx_edit, key=f"leader_{selected_edit_id}")
 
                     if e_target_category == "高校":
                         active_member_opts_e = member_options_hs if member_options_hs else member_options_all
@@ -728,28 +736,28 @@ else:
 
                     e_selected_members = []
                     if active_member_opts_e:
-                        e_selected_members = st.multiselect("対象部員", options=active_member_opts_e, default=default_parts_e)
+                        e_selected_members = st.multiselect("対象部員", options=active_member_opts_e, default=default_parts_e, key=f"members_{selected_edit_id}")
 
                     st.markdown("##### 🔗 Googleフォーム / ドキュメント / スプレッドシート リンク設定")
                     col_fb_e, col_fg_e = st.columns(2)
                     with col_fb_e:
-                        e_url_boy_in = st.text_input("📋 男子・参加アンケート (Googleフォーム)", value=e_url_boy)
+                        e_url_boy_in = st.text_input("📋 男子・参加アンケート (Googleフォーム)", value=e_url_boy, key=f"ub_{selected_edit_id}")
                     with col_fg_e:
-                        e_url_girl_in = st.text_input("📋 女子・参加アンケート (Googleフォーム)", value=e_url_girl)
+                        e_url_girl_in = st.text_input("📋 女子・参加アンケート (Googleフォーム)", value=e_url_girl, key=f"ug_{selected_edit_id}")
 
-                    e_url_doc_in = st.text_input("📝 注意事項 (Googleドキュメント URL)", value=e_url_doc)
-                    e_url_absent_in = st.text_input("✋ 欠席連絡 (Googleフォーム URL)", value=e_url_absent)
-                    e_url_sheet_in = st.text_input("📊 出欠状況 (Googleスプレッドシート URL)", value=e_url_sheet)
+                    e_url_doc_in = st.text_input("📝 注意事項 (Googleドキュメント URL)", value=e_url_doc, key=f"ud_{selected_edit_id}")
+                    e_url_absent_in = st.text_input("✋ 欠席連絡 (Googleフォーム URL)", value=e_url_absent, key=f"ua_{selected_edit_id}")
+                    e_url_sheet_in = st.text_input("📊 出欠状況 (Googleスプレッドシート URL)", value=e_url_sheet, key=f"us_{selected_edit_id}")
 
                     st.markdown("##### 📄 PDF添付（選択しない場合は既存のファイルが維持されます）")
-                    pdf_guidelines_e = st.file_uploader("大会要項 (PDF)", type=["pdf"], key="pdf_g_e")
-                    pdf_singles_e = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"], key="pdf_s1_e")
-                    pdf_singles_2_e = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"], key="pdf_s2_e")
-                    pdf_singles_3_e = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"], key="pdf_s3_e")
-                    pdf_doubles_e = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"], key="pdf_d_e")
-                    pdf_team_e = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"], key="pdf_t_e")
+                    pdf_guidelines_e = st.file_uploader("大会要項 (PDF)", type=["pdf"], key=f"pdf_g_{selected_edit_id}")
+                    pdf_singles_e = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"], key=f"pdf_s1_{selected_edit_id}")
+                    pdf_singles_2_e = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"], key=f"pdf_s2_{selected_edit_id}")
+                    pdf_singles_3_e = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"], key=f"pdf_s3_{selected_edit_id}")
+                    pdf_doubles_e = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"], key=f"pdf_d_{selected_edit_id}")
+                    pdf_team_e = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"], key=f"pdf_t_{selected_edit_id}")
 
-                    e_is_public_in = st.checkbox("生徒・保護者に公開する", value=e_is_public)
+                    e_is_public_in = st.checkbox("生徒・保護者に公開する", value=e_is_public, key=f"pub_{selected_edit_id}")
                     
                     st.markdown("##### 💼 事務管理（大会・練習試合用）")
                     e_app_idx = get_status_idx(edit_row["status_application"])
@@ -761,15 +769,16 @@ else:
 
                     col_m1_e, col_m2_e = st.columns(2)
                     with col_m1_e:
-                        e_status_app = st.selectbox("申込", status_opts, index=e_app_idx)
-                        e_status_pay = st.selectbox("支払い", status_opts, index=e_pay_idx)
-                        e_status_trip = st.selectbox("出張申請", status_opts, index=e_trip_idx)
+                        e_status_app = st.selectbox("申込", status_opts, index=e_app_idx, key=f"app_{selected_edit_id}")
+                        e_status_pay = st.selectbox("支払い", status_opts, index=e_pay_idx, key=f"pay_{selected_edit_id}")
+                        e_status_trip = st.selectbox("出張申請", status_opts, index=e_trip_idx, key=f"trip_{selected_edit_id}")
                     with col_m2_e:
-                        e_status_holiday = st.selectbox("休日活動届", status_opts, index=e_hol_idx)
-                        e_status_roster = st.selectbox("部員名簿", status_opts, index=e_ros_idx)
-                        e_status_delegation = st.selectbox("委任状", status_opts, index=e_del_idx)
+                        e_status_holiday = st.selectbox("休日活動届", status_opts, index=e_hol_idx, key=f"hol_{selected_edit_id}")
+                        e_status_roster = st.selectbox("部員名簿", status_opts, index=e_ros_idx, key=f"ros_{selected_edit_id}")
+                        e_status_delegation = st.selectbox("委任状", status_opts, index=e_del_idx, key=f"del_{selected_edit_id}")
 
                     edit_submitted = st.form_submit_button("上書き保存する（更新）", use_container_width=True)
+                    
                     if edit_submitted:
                         if e_title_in.strip() == "":
                             st.error("予定タイトルを入力してください。")
@@ -791,12 +800,12 @@ else:
                             path_team = save_uploaded_file(pdf_team_e, f"{ts_prefix}_team", edit_row["pdf_team"])
 
                             update_event(
-                                edit_event_id, e_target_category, e_event_date, e_s_time_str, e_e_time_str, e_event_type, e_title_in, e_location_in, e_leader_str, e_is_public_in,
+                                selected_edit_id, e_target_category, e_event_date, e_s_time_str, e_e_time_str, e_event_type, e_title_in, e_location_in, e_leader_str, e_is_public_in,
                                 e_status_app, e_status_pay, e_status_trip, e_status_holiday, e_status_roster, e_status_delegation,
                                 e_participants_str, path_guidelines, path_singles, path_singles_2, path_singles_3, path_doubles, path_team,
                                 e_url_boy_in, e_url_girl_in, e_url_doc_in, e_url_absent_in, e_url_sheet_in
                             )
-                            st.success(f"✅ 予定 ID:{edit_event_id} を上書き更新しました！")
+                            st.success(f"✅ 予定 ID:{selected_edit_id} のタイトルを「{e_title_in}」に更新しました！")
                             st.rerun()
             else:
                 st.info("編集対象の予定がありません。")
