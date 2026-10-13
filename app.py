@@ -8,7 +8,7 @@ from streamlit_calendar import calendar
 # ---------------------------------------------------------
 # 0. 設定・フォルダ作成＆パスワード定義
 # ---------------------------------------------------------
-TEACHER_PASSWORD = "tktt"
+TEACHER_PASSWORD = "admin"
 UPLOAD_DIR = "uploaded_pdfs"
 
 if not os.path.exists(UPLOAD_DIR):
@@ -28,6 +28,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # 1. events テーブルの初期作成
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +38,7 @@ def init_db():
             end_time TEXT NOT NULL,
             event_type TEXT NOT NULL DEFAULT '通常練習',
             title TEXT NOT NULL,
-            location TEXT,
+            location TEXT DEFAULT '',
             leader TEXT DEFAULT '',
             is_public INTEGER NOT NULL DEFAULT 1,
             status_application TEXT DEFAULT '不要',
@@ -62,6 +63,7 @@ def init_db():
         )
     """)
     
+    # 2. members テーブルの初期作成
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +76,7 @@ def init_db():
         )
     """)
 
+    # 3. teachers テーブルの初期作成
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teachers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +86,7 @@ def init_db():
         )
     """)
     
+    # 4. 既存DBマイグレーション（足りないカラムの動的追加）
     cursor.execute("PRAGMA table_info(events)")
     event_cols = [col[1] for col in cursor.fetchall()]
     new_cols = {
@@ -118,9 +122,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_uploaded_file(uploaded_file, prefix):
+def save_uploaded_file(uploaded_file, prefix, default_path=""):
     if uploaded_file is None:
-        return ""
+        return default_path
     file_path = os.path.join(UPLOAD_DIR, f"{prefix}_{uploaded_file.name}")
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -177,7 +181,7 @@ def delete_teacher(teacher_id):
     conn.commit()
     conn.close()
 
-# --- 予定 ---
+# --- 予定追加 & 更新 ---
 def add_event(target_category, event_date, start_time, end_time, event_type, title, location, leader, is_public,
               status_application, status_payment, status_trip, status_holiday_notice, status_roster, status_delegation,
               participants_str, pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
@@ -191,13 +195,36 @@ def add_event(target_category, event_date, start_time, end_time, event_type, tit
             participants, pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
             url_form_boy, url_form_girl, url_doc, url_absent, url_sheet
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         target_category, str(event_date), str(start_time), str(end_time), event_type, title, location, leader,
         1 if is_public else 0, status_application, status_payment, status_trip,
         status_holiday_notice, status_roster, status_delegation, participants_str,
         pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
         url_form_boy, url_form_girl, url_doc, url_absent, url_sheet
+    ))
+    conn.commit()
+    conn.close()
+
+def update_event(event_id, target_category, event_date, start_time, end_time, event_type, title, location, leader, is_public,
+                 status_application, status_payment, status_trip, status_holiday_notice, status_roster, status_delegation,
+                 participants_str, pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
+                 url_form_boy, url_form_girl, url_doc, url_absent, url_sheet):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE events SET
+            target_category = ?, event_date = ?, start_time = ?, end_time = ?, event_type = ?, title = ?, location = ?, leader = ?, is_public = ?,
+            status_application = ?, status_payment = ?, status_trip = ?, status_holiday_notice = ?, status_roster = ?, status_delegation = ?,
+            participants = ?, pdf_guidelines = ?, pdf_singles = ?, pdf_singles_2 = ?, pdf_singles_3 = ?, pdf_doubles = ?, pdf_team = ?,
+            url_form_boy = ?, url_form_girl = ?, url_doc = ?, url_absent = ?, url_sheet = ?
+        WHERE id = ?
+    """, (
+        target_category, str(event_date), str(start_time), str(end_time), event_type, title, location, leader,
+        1 if is_public else 0, status_application, status_payment, status_trip,
+        status_holiday_notice, status_roster, status_delegation, participants_str,
+        pdf_guidelines, pdf_singles, pdf_singles_2, pdf_singles_3, pdf_doubles, pdf_team,
+        url_form_boy, url_form_girl, url_doc, url_absent, url_sheet, event_id
     ))
     conn.commit()
     conn.close()
@@ -264,6 +291,7 @@ def prepare_calendar_events(df, is_teacher=False):
             "end": end_str,
             "allDay": False,
             "extendedProps": {
+                "id": row.get("id"),
                 "target_category": target_cat,
                 "event_type": row.get("event_type", "予定"),
                 "time_display": time_display,
@@ -393,6 +421,12 @@ def parse_time_str(time_str, default_time):
     except (ValueError, TypeError):
         return default_time
 
+def parse_date_str(date_str):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return date.today()
+
 # ---------------------------------------------------------
 # 3. アプリ初期設定 & UI構築
 # ---------------------------------------------------------
@@ -468,8 +502,15 @@ else:
 
         st.divider()
         
-        sub_tab_add, sub_tab_list = st.tabs(["➕ 新規予定・事務登録", "📋 登録一覧・削除"])
+        sub_tab_add, sub_tab_edit, sub_tab_list = st.tabs(["➕ 新規予定・事務登録", "✏️ 登録済みの予定を編集・更新", "📋 登録一覧・削除"])
         
+        cat_list = ["高校", "中学", "合同", "その他"]
+        event_types_list = ["大会", "練習試合", "通常練習", "ミーティング", "その他"]
+        status_opts = ["未申請", "申請済", "不要"]
+        def get_status_idx(val):
+            return status_opts.index(val) if val in status_opts else 2
+
+        # --- SubTab 1: 新規登録 ---
         with sub_tab_add:
             copy_template = None
             if not df_all.empty:
@@ -502,22 +543,14 @@ else:
             default_url_absent = copy_template.get("url_absent", "") if copy_template is not None else ""
             default_url_sheet = copy_template.get("url_sheet", "") if copy_template is not None else ""
 
-            cat_list = ["高校", "中学", "合同", "その他"]
             cat_index = cat_list.index(default_target) if default_target in cat_list else 2
-
-            event_types_list = ["大会", "練習試合", "通常練習", "ミーティング", "その他"]
             type_index = event_types_list.index(default_type) if default_type in event_types_list else 0
 
-            # 引率者のプルダウン選択肢（教員優先、無ければ部員）
             leader_select_list = teacher_options if teacher_options else member_options_all
             leader_options = ["未設定"] + leader_select_list
             leader_index = 0
             if default_leader in leader_options:
                 leader_index = leader_options.index(default_leader)
-
-            status_opts = ["未申請", "申請済", "不要"]
-            def get_status_idx(val):
-                return status_opts.index(val) if val in status_opts else 2
 
             with st.form("add_event_form", clear_on_submit=True):
                 col_cat, col_type = st.columns(2)
@@ -538,8 +571,6 @@ else:
                 location = st.text_input("場所", value=default_location)
                 
                 selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_options, index=leader_index)
-                if not teacher_options:
-                    st.caption("※教員名簿が未登録のため、部員リストを表示しています。「👨‍🏫 教員名簿」タブから教員を追加できます。")
 
                 if target_category == "高校":
                     active_member_opts = member_options_hs if member_options_hs else member_options_all
@@ -570,19 +601,15 @@ else:
 
                 st.markdown("##### 📄 PDF添付")
                 pdf_guidelines_file = st.file_uploader("大会要項 (PDF)", type=["pdf"])
-                
-                st.caption("シングルスの組み合わせ（最大3ファイルまでアップロード可）")
                 pdf_singles_file = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"])
                 pdf_singles_file_2 = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"])
                 pdf_singles_file_3 = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"])
-                
                 pdf_doubles_file = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"])
                 pdf_team_file = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"])
 
                 is_public = st.checkbox("生徒・保護者に公開する", value=default_is_public)
                 
                 st.markdown("##### 💼 事務管理（大会・練習試合用）")
-                
                 app_idx = get_status_idx(copy_template["status_application"]) if copy_template is not None else 0
                 pay_idx = get_status_idx(copy_template["status_payment"]) if copy_template is not None else 0
                 trip_idx = get_status_idx(copy_template["status_trip"]) if copy_template is not None else 0
@@ -600,7 +627,7 @@ else:
                     status_roster = st.selectbox("部員名簿", status_opts, index=ros_idx)
                     status_delegation = st.selectbox("委任状", status_opts, index=del_idx)
 
-                submitted = st.form_submit_button("保存する", use_container_width=True)
+                submitted = st.form_submit_button("新規追加して保存する", use_container_width=True)
                 if submitted:
                     if title.strip() == "":
                         st.error("予定タイトルを入力してください。")
@@ -629,6 +656,152 @@ else:
                         st.success("✅ 登録しました！")
                         st.rerun()
 
+        # --- SubTab 2: 直接編集 ---
+        with sub_tab_edit:
+            if not df_all.empty:
+                edit_options = [
+                    f"【ID:{row['id']} / {row['event_date']}】[{row.get('target_category', '合同')}] {row['title']}"
+                    for _, row in df_all.iterrows()
+                ]
+                selected_edit_str = st.selectbox("編集したい予定を選択してください", edit_options, key="edit_event_selectbox")
+                
+                selected_edit_idx = edit_options.index(selected_edit_str)
+                edit_row = df_all.iloc[selected_edit_idx]
+                edit_event_id = edit_row['id']
+
+                e_target = edit_row.get("target_category", "合同")
+                e_type = edit_row["event_type"]
+                e_title = edit_row["title"]
+                e_location = edit_row["location"] or ""
+                e_leader = edit_row.get("leader", "") or ""
+                e_date = parse_date_str(edit_row["event_date"])
+                e_start_time = parse_time_str(edit_row["start_time"], time(9, 0))
+                e_end_time = parse_time_str(edit_row["end_time"], time(12, 0))
+                e_is_public = bool(edit_row["is_public"])
+
+                e_url_boy = edit_row.get("url_form_boy") or edit_row.get("url_form") or ""
+                e_url_girl = edit_row.get("url_form_girl", "") or ""
+                e_url_doc = edit_row.get("url_doc", "") or ""
+                e_url_absent = edit_row.get("url_absent", "") or ""
+                e_url_sheet = edit_row.get("url_sheet", "") or ""
+
+                cat_idx_edit = cat_list.index(e_target) if e_target in cat_list else 2
+                type_idx_edit = event_types_list.index(e_type) if e_type in event_types_list else 0
+
+                leader_select_list_edit = teacher_options if teacher_options else member_options_all
+                leader_opts_edit = ["未設定"] + leader_select_list_edit
+                leader_idx_edit = leader_opts_edit.index(e_leader) if e_leader in leader_opts_edit else 0
+
+                with st.form(f"edit_event_form_{edit_event_id}"):
+                    st.markdown(f"#### ✏️ 予定 ID:{edit_event_id} の内容を編集")
+                    
+                    col_cat_e, col_type_e = st.columns(2)
+                    with col_cat_e:
+                        e_target_category = st.selectbox("対象（区分）", cat_list, index=cat_idx_edit)
+                    with col_type_e:
+                        e_event_type = st.selectbox("予定の種類", event_types_list, index=type_idx_edit)
+
+                    e_event_date = st.date_input("日付", value=e_date)
+                    
+                    c_start_e, c_end_e = st.columns(2)
+                    with c_start_e:
+                        e_start_t = st.time_input("開始時間", value=e_start_time)
+                    with c_end_e:
+                        e_end_t = st.time_input("終了時間", value=e_end_time)
+                    
+                    e_title_in = st.text_input("予定タイトル", value=e_title)
+                    e_location_in = st.text_input("場所", value=e_location)
+                    
+                    e_selected_leader = st.selectbox("👨‍🏫 引率者", options=leader_opts_edit, index=leader_idx_edit)
+
+                    if e_target_category == "高校":
+                        active_member_opts_e = member_options_hs if member_options_hs else member_options_all
+                    elif e_target_category == "中学":
+                        active_member_opts_e = member_options_ms if member_options_ms else member_options_all
+                    else:
+                        active_member_opts_e = member_options_all
+
+                    default_parts_e = []
+                    if edit_row["participants"]:
+                        cur_parts = [p.strip() for p in edit_row["participants"].split(",")]
+                        default_parts_e = [m for m in active_member_opts_e if m in cur_parts]
+
+                    e_selected_members = []
+                    if active_member_opts_e:
+                        e_selected_members = st.multiselect("対象部員", options=active_member_opts_e, default=default_parts_e)
+
+                    st.markdown("##### 🔗 Googleフォーム / ドキュメント / スプレッドシート リンク設定")
+                    col_fb_e, col_fg_e = st.columns(2)
+                    with col_fb_e:
+                        e_url_boy_in = st.text_input("📋 男子・参加アンケート (Googleフォーム)", value=e_url_boy)
+                    with col_fg_e:
+                        e_url_girl_in = st.text_input("📋 女子・参加アンケート (Googleフォーム)", value=e_url_girl)
+
+                    e_url_doc_in = st.text_input("📝 注意事項 (Googleドキュメント URL)", value=e_url_doc)
+                    e_url_absent_in = st.text_input("✋ 欠席連絡 (Googleフォーム URL)", value=e_url_absent)
+                    e_url_sheet_in = st.text_input("📊 出欠状況 (Googleスプレッドシート URL)", value=e_url_sheet)
+
+                    st.markdown("##### 📄 PDF添付（選択しない場合は既存のファイルが維持されます）")
+                    pdf_guidelines_e = st.file_uploader("大会要項 (PDF)", type=["pdf"], key="pdf_g_e")
+                    pdf_singles_e = st.file_uploader("組み合わせ：シングルス ① (PDF)", type=["pdf"], key="pdf_s1_e")
+                    pdf_singles_2_e = st.file_uploader("組み合わせ：シングルス ② (PDF)", type=["pdf"], key="pdf_s2_e")
+                    pdf_singles_3_e = st.file_uploader("組み合わせ：シングルス ③ (PDF)", type=["pdf"], key="pdf_s3_e")
+                    pdf_doubles_e = st.file_uploader("組み合わせ：ダブルス (PDF)", type=["pdf"], key="pdf_d_e")
+                    pdf_team_e = st.file_uploader("組み合わせ：学校対抗 (PDF)", type=["pdf"], key="pdf_t_e")
+
+                    e_is_public_in = st.checkbox("生徒・保護者に公開する", value=e_is_public)
+                    
+                    st.markdown("##### 💼 事務管理（大会・練習試合用）")
+                    e_app_idx = get_status_idx(edit_row["status_application"])
+                    e_pay_idx = get_status_idx(edit_row["status_payment"])
+                    e_trip_idx = get_status_idx(edit_row["status_trip"])
+                    e_hol_idx = get_status_idx(edit_row["status_holiday_notice"])
+                    e_ros_idx = get_status_idx(edit_row["status_roster"])
+                    e_del_idx = get_status_idx(edit_row["status_delegation"])
+
+                    col_m1_e, col_m2_e = st.columns(2)
+                    with col_m1_e:
+                        e_status_app = st.selectbox("申込", status_opts, index=e_app_idx)
+                        e_status_pay = st.selectbox("支払い", status_opts, index=e_pay_idx)
+                        e_status_trip = st.selectbox("出張申請", status_opts, index=e_trip_idx)
+                    with col_m2_e:
+                        e_status_holiday = st.selectbox("休日活動届", status_opts, index=e_hol_idx)
+                        e_status_roster = st.selectbox("部員名簿", status_opts, index=e_ros_idx)
+                        e_status_delegation = st.selectbox("委任状", status_opts, index=e_del_idx)
+
+                    edit_submitted = st.form_submit_button("上書き保存する（更新）", use_container_width=True)
+                    if edit_submitted:
+                        if e_title_in.strip() == "":
+                            st.error("予定タイトルを入力してください。")
+                        else:
+                            e_s_time_str = e_start_t.strftime("%H:%M")
+                            e_e_time_str = e_end_t.strftime("%H:%M")
+                            if e_event_type not in ["大会", "練習試合"]:
+                                e_status_app = e_status_pay = e_status_trip = e_status_holiday = e_status_roster = e_status_delegation = "不要"
+                            
+                            e_participants_str = ", ".join(e_selected_members) if e_selected_members else "全員/未指定"
+                            e_leader_str = "" if e_selected_leader == "未設定" else e_selected_leader
+                            
+                            ts_prefix = date.today().strftime("%Y%m%d")
+                            path_guidelines = save_uploaded_file(pdf_guidelines_e, f"{ts_prefix}_guidelines", edit_row["pdf_guidelines"])
+                            path_singles = save_uploaded_file(pdf_singles_e, f"{ts_prefix}_singles", edit_row["pdf_singles"])
+                            path_singles_2 = save_uploaded_file(pdf_singles_2_e, f"{ts_prefix}_singles2", edit_row.get("pdf_singles_2", ""))
+                            path_singles_3 = save_uploaded_file(pdf_singles_3_e, f"{ts_prefix}_singles3", edit_row.get("pdf_singles_3", ""))
+                            path_doubles = save_uploaded_file(pdf_doubles_e, f"{ts_prefix}_doubles", edit_row["pdf_doubles"])
+                            path_team = save_uploaded_file(pdf_team_e, f"{ts_prefix}_team", edit_row["pdf_team"])
+
+                            update_event(
+                                edit_event_id, e_target_category, e_event_date, e_s_time_str, e_e_time_str, e_event_type, e_title_in, e_location_in, e_leader_str, e_is_public_in,
+                                e_status_app, e_status_pay, e_status_trip, e_status_holiday, e_status_roster, e_status_delegation,
+                                e_participants_str, path_guidelines, path_singles, path_singles_2, path_singles_3, path_doubles, path_team,
+                                e_url_boy_in, e_url_girl_in, e_url_doc_in, e_url_absent_in, e_url_sheet_in
+                            )
+                            st.success(f"✅ 予定 ID:{edit_event_id} を上書き更新しました！")
+                            st.rerun()
+            else:
+                st.info("編集対象の予定がありません。")
+
+        # --- SubTab 3: 登録一覧 & 削除 ---
         with sub_tab_list:
             if not df_all.empty:
                 df_display = df_all.copy()
